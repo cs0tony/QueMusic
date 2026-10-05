@@ -11,6 +11,7 @@
 class QAction;
 class QMenu;
 class QSystemTrayIcon;
+class QWindow;
 
 // 系统托盘管理器：常驻托盘图标 + 原生右键菜单，托盘交互以信号回发给 QML。
 // 依赖 QtWidgets（QSystemTrayIcon/QMenu），应用必须使用 QApplication 启动。
@@ -70,6 +71,11 @@ public:
 
     // 显式结束进程：窗口可能正隐藏在托盘里，QWindow::close() 对不可见窗口不生效
     Q_INVOKABLE void quitApplication();
+
+    // 实际销毁窗口的原生资源（HWND、任务栏项、渲染表面），QWindow 对象与 QML 场景保留，
+    // 之后对窗口 show()/setVisible(true) 会自动重建原生窗口。
+    // 用于“关闭窗口后台继续播放”：相比隐藏，销毁后窗口不再占用系统窗口与渲染资源
+    Q_INVOKABLE void destroyWindow(QWindow *window);
 
 signals:
     void visibleChanged();

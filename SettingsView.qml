@@ -959,7 +959,7 @@ Item {
 
                         SettingItemCard {
                             label: "最小化托盘"
-                            tip: "开启后点击关闭按钮将隐藏窗口（任务栏不再显示），可从托盘图标恢复或退出"
+                            tip: "开启后点击关闭按钮将实际销毁窗口（任务栏不再显示），音乐在后台继续播放，可从托盘图标恢复或退出"
                             controlItem: QSwitch {
                                 anchors.fill: parent
                                 letRight: true

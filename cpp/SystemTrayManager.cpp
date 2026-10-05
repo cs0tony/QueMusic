@@ -11,6 +11,7 @@
 #include <QSize>
 #include <QStyle>
 #include <QSystemTrayIcon>
+#include <QWindow>
 
 namespace {
 
@@ -201,6 +202,17 @@ void SystemTrayManager::showMessage(const QString &title, const QString &body,
 void SystemTrayManager::quitApplication()
 {
     QCoreApplication::quit();
+}
+
+void SystemTrayManager::destroyWindow(QWindow *window)
+{
+    if (!window)
+        return;
+    // 先按常规路径隐藏（触发 expose 结束、渲染停止），再释放原生窗口资源；
+    // QWindow 对象与 QML 场景保持有效，下次 show() 时平台窗口会自动重建
+    if (window->isVisible())
+        window->hide();
+    window->destroy();
 }
 
 void SystemTrayManager::updateToolTip()

@@ -127,7 +127,7 @@ Window {
     onClosing: function(close) {
         if(win.closeToTray()) {
             close.accepted = false;
-            win.hideToTray();
+            win.destroyToTray();
             return;
         }
         // 未开启托盘时也要走保存与会话收尾，不能直接放行

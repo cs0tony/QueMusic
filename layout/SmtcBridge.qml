@@ -66,6 +66,17 @@ QtObject {
                                queue.playListIndex > 0)
     }
 
+    // 原生窗口销毁后重建（关闭窗口后台播放 → 托盘恢复）时 HWND 已变化，
+    // 需要释放旧的 SMTC 绑定并重新绑定到新窗口，再补推当前播放状态与曲目信息
+    function rebindWindow(): void {
+        if (!targetWindow || !mgr.available)
+            return
+        mgr.shutdown()
+        mgr.initialize(targetWindow)
+        root.push()
+        root.pushInfo()
+    }
+
     property WindowsSmtcManager mgr: WindowsSmtcManager {
         id: mgr
 
