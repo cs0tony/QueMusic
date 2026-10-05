@@ -127,7 +127,8 @@ file(GLOB_RECURSE LYRICS_UI_QML RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} CONFIGURE_D
 
 # 模块内全部 QML/JS；qmltc 跳过清单须在 qt6_add_qml_module() 解析参数前备好，故先统一为变量
 set(QUE_MUSIC_QML_FILES
-    main.qml
+    AppRoot.qml
+    MainWindow.qml
     SettingsView.qml
     api/qrcode.js
     ${LAYOUT_QML}

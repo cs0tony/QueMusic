@@ -81,8 +81,9 @@ Rectangle {
     Behavior on hideHeight { enabled: musicControlMax.visible; NumberAnimation { duration: 480; easing.type: Easing.OutExpo } }
 
     Connections {
-        target: colorExtractor
-        function onColorExtractFinished(): void {
+        // 取色器常驻 AppRoot（原为场景内 colorExtractor 的 colorExtractFinished 信号）
+        target: Options.app
+        function onCoverColorsExtracted(): void {
             rectcolorAnime.running = false;
             rectcolorAnime.running = true;
         }

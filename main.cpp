@@ -158,6 +158,8 @@ int main(int argc, char *argv[])
     engine.rootContext()->setContextProperty("qtRuntimeVersion", QLibraryInfo::version().toString());
 
     QWK::registerTypes(&engine);
-    engine.load(QUrl(QStringLiteral("qrc:/QueMusic/main.qml")));
+    // 入口是常驻根 AppRoot：播放引擎/队列/托盘/SMTC 存活于它，
+    // 主窗口场景（MainWindow.qml）由其创建/销毁/重建
+    engine.load(QUrl(QStringLiteral("qrc:/QueMusic/AppRoot.qml")));
     return application.exec();
 }

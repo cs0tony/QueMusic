@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2025-2026 QueMusic Contributors
 //
+// 主窗口场景：由 AppRoot（常驻根）创建/销毁/重建。开启「最小化托盘」后关闭窗口
+// 会销毁整个场景（原生窗口 + 界面 QML 对象全部释放），播放核心存活于 AppRoot 后台继续。
 import QtQuick
 import QueMusic 1.0
 import QtCore
-import QtMultimedia
 import QWindowKit 1.0
 import QtQuick.Controls.Basic
 
@@ -16,13 +17,25 @@ Window {
     minimumHeight: 540
     color: Style.primaryColor
     title: "QueMusic"
+
+    // 常驻对象桥接：引擎/队列实际存活于 AppRoot（经 Options 注入），
+    // 以同名属性暴露后，本文件内所有既有 mainMedia / playListModel 引用无需改动
+    readonly property AudioEngine mainMedia: Options.mainMedia
+    readonly property QueueModel playListModel: Options.queue
+
+    // 托盘唤起（场景存活时）：最小化还原/置前；场景已销毁时由 AppRoot 重建
+    function restoreFromTray(): void {
+        win.restoreWindow()
+    }
+    function saveGeometry(): void {
+        win.saveGeometry()
+    }
+
     Component.onCompleted: {
-        Options.queue = playListModel
         Options.warn = mainWarn
         Options.dialog = globalDialog
         Options.agent = windowAgent
         Options.desktop = desktopPlayer
-        Options.smtc = smtc
         windowAgent.setup(window);
         // dark-mode / extra-margins / title-bar-height 是 Windows 专有属性
         if(!window.isMacOS) {
@@ -44,26 +57,17 @@ Window {
             window.height = Options.settings.winH;
         }
 
-        window.visible = true;
+        if (Options.settings.winMax)
+            window.showMaximized()
+        else
+            window.visible = true;
 
-        Playback.player = mainMedia;
-        Playback.queue = playListModel;
+        // 场景重建或首次启动：把 SMTC 绑定到当前原生窗口（HWND 变化时必需）
+        Options.smtc.targetWindow = window;
+        Options.smtc.rebindWindow();
 
         Style.changeUi();
         Style.changeTheme();
-
-        // 会话恢复 / 历史加载 / 封面缓存维护都是磁盘与网络 I/O，全部移出首帧
-        Qt.callLater(function() {
-            Playback.loadHistory();
-            Playback.restoreSession();
-
-            if(Options.settings.cacheUrl)
-                coverHelper.setCacheDir(Options.settings.cacheUrl);
-            coverHelper.pruneCache(Options.settings.cacheSize);
-
-            if(Options.settings.autoUpdate)
-                autoUpdateTimer.start();
-        });
     }
 
     Binding {
@@ -75,26 +79,6 @@ Window {
         target: MusicApi
         property: "downloadPath"
         value: Options.settings.downloadFolder
-    }
-
-
-    function silentUpdateCheck(): void {
-        const xhr = new XMLHttpRequest();
-        xhr.onreadystatechange = function() {
-            if (xhr.readyState === XMLHttpRequest.DONE && xhr.status === 200) {
-                const remote = parseInt(xhr.responseText.trim().substring(0, 3));
-                if (remote > Options.versionCode)
-                    mainWarn.tiped("发现新版本 v" + remote + "，请在设置-关于中查看", 1);
-            }
-        }
-        xhr.open("GET", "https://raw.githubusercontent.com/BroNekoX/QueMusic/main/doc/updater.txt");
-        xhr.send();
-    }
-
-    Timer {
-        id: autoUpdateTimer
-        interval: 3000
-        onTriggered: window.silentUpdateCheck()
     }
 
 
@@ -138,11 +122,7 @@ Window {
     WindowControls {
         id: win
         targetWindow: window
-        tray: systemTray
-        onSessionClosing: {
-            desktopLyricsLoader.active = false
-            desktopPlayerLoader.active = false
-        }
+        tray: Options.tray
     }
     signal getKeys(var keys)
     signal exit()
@@ -531,32 +511,16 @@ Window {
             }
         }
 
+        // 封面主题色：状态常驻 AppRoot（取色器也在那边），
+        // 窗口销毁期间换歌，恢复界面后颜色也是最新的
         Item {
             id: coverColor
             width: 800
             height: 600
-            property color color1: "#00ee66"
-            property color color2: "#00b1ee"
-            property color color3: "#9d4edd"
-            property bool thirdColors: true
-
-            // 取色在工作线程完成，结果回填
-            ColorExtractor {
-                id: colorExtractor
-                signal colorExtractFinished()
-                onColorsExtracted: (colors) => {
-                    coverColor.color1 = colors.length > 0 ? colors[0] : "#00b1ee";
-                    coverColor.color2 = colors.length > 1 ? colors[1] : "#9d4edd";
-                    coverColor.color3 = colors.length > 2 ? colors[2]
-                                      : (colors.length === 2 ? colors[0] : "#00ea64");
-                    coverColor.thirdColors = colors.length >= 3 || colors.length < 2;
-                    colorExtractFinished();
-                }
-
-                onColorsExtractedAsString: (colors) => {
-                    console.log("颜色字符串:", colors);
-                }
-            }
+            property color color1: Options.app.coverColor1
+            property color color2: Options.app.coverColor2
+            property color color3: Options.app.coverColor3
+            property bool thirdColors: Options.app.coverThirdColors
         }
     }
 
@@ -692,97 +656,9 @@ Window {
         }
     }
 
-    CoverHelper {
-        id: coverHelper
-        onLocalCoverReady: (path, coverUrl) => {
-            if (path !== Playback.localLyricsRequestPath)
-                return;
-            const localCover = coverUrl || coverHelper.findLocalCover(path);
-            mainMedia.urlStr = localCover || "qrc:/QueMusic/resources/app/musicpic.png";
-            if (localCover)
-                colorExtractor.extractColorsFromUrl(localCover);
-        }
-    }
+    // 播放引擎 / 播放事件接线（CoverHelper、WebDavCache、MusicApi 的 Connections）
+    // 与取色器均常驻 AppRoot，不随本场景销毁；这里仅保留频谱取波形（渲染需要本窗口）
 
-    // WebDAV 缓存落地：按本地文件那套回填（标签/同名歌词/同目录封面）
-    Connections {
-        target: WebDavCache
-        function onCached(url: string, localPath: string): void {
-            if (mainMedia.source.toString() !== url)
-                return;
-            Playback.localLyricsRequestPath = localPath;
-            MusicApi.readLocalMetadataAsync(localPath);
-        }
-    }
-
-    Connections {
-        target: MusicApi
-        function onUrlplay(playurl: string, title: string, artist: string, cover: string,
-                           solve: string, hash: string, source: int): void {
-            mainMedia.noTitle = title;
-            Playback.musicTitle = title;
-            Playback.musicArtist = artist;
-            Playback.musicHash = hash;
-            Playback.musicSource = source;
-            mainMedia.urlStr = cover;
-            colorExtractor.extractColorsFromUrl(solve);
-            // 淡出静音排空设备缓冲后再换源：上一首仍在播放，直接换 source 会截断波形产生爆音
-            Playback.swap(function() {
-                mainMedia.source = playurl;
-                mainMedia.play();
-            });
-
-            const listIndex = Playback.indexOfPath(hash);
-            if (listIndex < 0) {
-                playListModel.append({ name: title, path: hash, songer: artist, source: source });
-                playListModel.playListIndex = playListModel.count - 1;
-            } else {
-                playListModel.playListIndex = listIndex;
-            }
-        }
-        function onWarned(text: string, type: int): void {
-            mainWarn.tiped(text,type);
-        }
-        function onLocalLyricsReady(filePath: string, lyrics: var, translate: var): void {
-            if (filePath !== Playback.localLyricsRequestPath)
-                return;
-            MusicApi.lyricsData = lyrics;
-            MusicApi.lyricsTranslate = translate || [];
-        }
-        function onLocalLyricsFailed(filePath: string): void {
-            if (filePath !== Playback.localLyricsRequestPath)
-                return;
-            if ((MusicApi.lyricsData || []).length > 1) // 已有歌词（如内嵌 SYLT）就保留，别退回占位
-                return;
-            MusicApi.setLocalLyrics();
-        }
-        function onLocalMetadataReady(filePath: string, meta: var): void {
-            if (filePath !== Playback.localLyricsRequestPath)
-                return;
-            if (meta.title)
-                Playback.musicTitle = meta.title;
-            if (meta.artist)
-                Playback.musicArtist = meta.artist;
-            if (meta.album)
-                mainMedia.album = meta.album;
-            const hasMetaLyrics = meta.lyrics && meta.lyrics.length > 0;
-            MusicApi.lyricsData = meta.lyrics || [];
-            MusicApi.lyricsTranslate = meta.translate || [];
-            if (!hasMetaLyrics)
-                MusicApi.setLocalLyrics();
-            MusicApi.readLocalLyricsAsync(filePath, meta.title || mainMedia.noTitle,
-                                          meta.artist || "", meta.duration || 0, !hasMetaLyrics);
-            if (meta.cover) {
-                mainMedia.urlStr = meta.cover;
-                colorExtractor.extractColorsFromUrl(meta.cover);
-            } else {
-                coverHelper.findEmbeddedCoverAsync(filePath);
-            }
-        }
-    }
-
-
-    MediaDevices { id: musicDevices }
     GetWave {
         id: getWave
         engine: mainMedia
@@ -791,120 +667,8 @@ Window {
         bands: 128
     }
 
-    AudioEngine {
-        id: mainMedia
-        // 封面初值；noTitle / onMedia 由引擎提供，专辑等元数据直接读 albumTitle / mediaDate / mediaType
-        urlStr: "qrc:/QueMusic/resources/app/musicpic.png"
-
-        source: ""
-        volume: Playback.outVolume
-        deviceId: Options.settings.useDefaultDevice || musicDevices.audioOutputs.length <= Options.settings.audioDevice
-                  ? "" : String(musicDevices.audioOutputs[Options.settings.audioDevice].id)
-
-        onMetaDataChanged: {
-            if (mainMedia.source.toString().startsWith("http"))
-                return
-            if (tagTitle)
-                Playback.musicTitle = tagTitle
-            if (artist)
-                Playback.musicArtist = artist
-        }
-
-        onMediaStatusChanged: {
-            if (mediaStatus === AudioEngine.LoadedMedia)
-                Playback.autoSkipCount = 0;
-            if(mediaStatus === AudioEngine.EndOfMedia) {
-                if(Playback.sleepMode === 2) {
-                    Playback.sleepEnd();
-                    return;
-                }
-                switch(Options.settings.cycleIndex) {
-                    case 0:
-                        Playback.next(false);
-                        break;
-                    case 1:
-                        // 重播同样会刷新缓冲，走淡出/淡入
-                        Playback.swap(function() {
-                            mainMedia.position = 0;
-                            mainMedia.play();
-                        })
-                        break;
-                    case 2:
-                        Playback.next(true);
-                        break;
-                    case 3:
-                        // 停止不再淡回，直接复位音量乘数
-                        Playback.swap(function() { mainMedia.stop() }, false);
-                        break;
-                }
-            }
-        }
-
-        onErrorOccurred: {
-            if(playListModel.count < 2) return;
-            if (Playback.autoSkipCount >= 2) {
-                Playback.autoSkipCount = 0;
-                Style.warned("连续多首无法播放，已停止自动跳过", 0);
-                return;
-            }
-            Playback.autoSkipCount += 1;
-            Style.warned("当前歌曲无法播放，已自动跳过",0);
-            if(Options.settings.cycleIndex === 2) {
-                Playback.next(true);
-            } else {
-                Playback.next(false);
-            }
-        }
-
-        // 新音轨真正起播后再淡回，避免音频设备重开的瞬间已经有音量
-        onPlayingChanged: {
-            if (playing)
-                Playback.finishSwap();
-        }
-
-        onSourceChanged: {
-            Playback.clearAb();
-        }
-        onPlaybackStateChanged: {
-            if (mainMedia.playbackState === AudioEngine.PlayingState)
-                Playback.noteNowPlaying();
-        }
-    }
-    SystemTrayManager {
-        id: systemTray
-        iconSource: "qrc:/QueMusic/resources/icon.ico"
-        title: "QueMusic"
-        playing: mainMedia.playbackState === AudioEngine.PlayingState
-        nowPlaying: Playback.musicTitle !== "QueMusic"
-                    ? Playback.musicTitle + (Playback.musicArtist && Playback.musicArtist !== "Artist"
-                                           ? " - " + Playback.musicArtist : "")
-                    : ""
-
-        onShowWindowRequested: win.restoreWindow()
-        onPlayPauseRequested: Playback.togglePlay()
-        onPreviousRequested: Playback.previous()
-        onNextRequested: Playback.next(false)
-        onQuitRequested: win.quitApp()
-        onActivated: (reason) => {
-            // 左键单击 / 双击托盘图标：恢复主界面
-            if(reason === SystemTrayManager.Trigger || reason === SystemTrayManager.DoubleClick)
-                win.restoreWindow();
-        }
-    }
-
-    SmtcBridge {
-        id: smtc
-        player: mainMedia
-        queue: playListModel
-        targetWindow: window
-    }
-
-    // 播放列表（C++ QueueModel：O(1) 路径查找、批量操作、角色化访问）
-    QueueModel {
-        id: playListModel
-        playListIndex: -1
-    }
-
+    // 播放引擎（AudioEngine）、播放队列（QueueModel）、系统托盘（SystemTrayManager）、
+    // SMTC 桥（SmtcBridge）均常驻 AppRoot，不再由本场景持有
 
     SearchCard {
         id: searchCard
@@ -920,20 +684,6 @@ Window {
         id: desktopPlayer
     }
 
-    Loader {
-        id: desktopPlayerLoader
-        active: false
-        asynchronous: true
-        visible: status == Loader.Ready
-        source: "qrc:/QueMusic/components/DesktopPlayerWindow.qml"
-    }
-    Loader {
-        id: desktopLyricsLoader
-        active: false
-        asynchronous: true
-        visible: status == Loader.Ready
-        source: "qrc:/QueMusic/components/DesktopLyrics.qml"
-    }
     QAlertDialog {
         id: globalDialog
         title: "Dialog"

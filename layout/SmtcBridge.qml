@@ -66,12 +66,14 @@ QtObject {
                                queue.playListIndex > 0)
     }
 
-    // 原生窗口销毁后重建（关闭窗口后台播放 → 托盘恢复）时 HWND 已变化，
-    // 需要释放旧的 SMTC 绑定并重新绑定到新窗口，再补推当前播放状态与曲目信息
+    // 绑定/重绑到当前主窗口：桥体常驻 AppRoot，而窗口场景会销毁重建（HWND 变化），
+    // 场景创建完成时由 MainWindow 调用——旧绑定存在则先释放，再初始化到新窗口，
+    // 并补推当前播放状态与曲目信息（首次调用即首次初始化）
     function rebindWindow(): void {
-        if (!targetWindow || !mgr.available)
+        if (!targetWindow)
             return
-        mgr.shutdown()
+        if (mgr.available)
+            mgr.shutdown()
         mgr.initialize(targetWindow)
         root.push()
         root.pushInfo()
@@ -80,10 +82,8 @@ QtObject {
     property WindowsSmtcManager mgr: WindowsSmtcManager {
         id: mgr
 
-        Component.onCompleted: {
-            initialize(root.targetWindow)
-            root.updateControls()
-        }
+        // 初始化不在组件完成时做：targetWindow 由窗口场景创建时注入，
+        // 统一走 rebindWindow()（首次即初始化，场景重建后即重绑）
 
         onPlayPressed: Playback.togglePlay()
         onPausePressed: Playback.togglePlay()

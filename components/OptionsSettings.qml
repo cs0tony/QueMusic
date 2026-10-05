@@ -15,6 +15,7 @@ Settings {
     property int winY: 0
     property int winW: 0
     property int winH: 0
+    property bool winMax: false //窗口关闭时是否处于最大化（托盘恢复场景时还原）
     property bool autoUpdate: false //自动检查更新
     property list<string> searchList: [] //搜索记录
     property bool openShortCut: true

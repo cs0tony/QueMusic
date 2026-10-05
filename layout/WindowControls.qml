@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2025-2026 QueMusic Contributors
 //
-// 主窗口生命周期：托盘销毁/恢复、关闭前保存会话与窗口几何、退出流程。
+// 主窗口场景生命周期：关闭按钮与系统级关闭的分流（托盘销毁 / 真实退出）、
+// 会话与窗口几何保存、托盘唤起。
+// 场景整体由 AppRoot 创建与销毁——销毁时原生窗口与界面 QML 对象全部释放，
+// 播放引擎/队列/托盘/桌面部件常驻 AppRoot，后台播放不中断。
 import QtQuick
 import QueMusic 1.0
 
@@ -11,34 +14,16 @@ QtObject {
     property Window targetWindow
     property SystemTrayManager tray
 
-    property bool forceQuit: false
-    property int restoreVisibility: 0
-    property bool trayTipShown: false
-    property bool nativeWindowDestroyed: false   // 原生窗口已销毁，恢复时需重绑 SMTC
-
-    signal sessionClosing()
-
     function closeToTray(): bool {
-        return Options.settings.closeToManage && !forceQuit && tray && tray.available
+        return Options.settings.closeToManage && tray && tray.available
     }
 
-    function toClosing(): void {
-        if (closeToTray()) {
-            destroyToTray()
+    // 保存窗口几何与最大化状态（销毁到托盘 / 真实退出前调用）
+    function saveGeometry(): void {
+        if (!targetWindow)
             return
-        }
-        const q = Playback.queue
-        const p = Playback.player
-        const idx = q ? q.playListIndex : -1
-        if (q && q.count > 0 && idx >= 0) {
-            const item = q.get(idx)
-            Options.lastSongs.name = Playback.musicTitle
-            Options.lastSongs.artist = Playback.musicArtist
-            Options.lastSongs.cover = (p && p.urlStr) || "qrc:/QueMusic/resources/app/musicpic.png"
-            Options.lastSongs.hash = item.path
-            Options.lastSongs.source = item.source
-        }
-        if (Options.settings.rememberWindow && targetWindow
+        Options.settings.winMax = targetWindow.visibility === Window.Maximized
+        if (Options.settings.rememberWindow
                 && targetWindow.visibility !== Window.Maximized
                 && targetWindow.visibility !== Window.FullScreen) {
             Options.settings.winX = targetWindow.x
@@ -46,58 +31,48 @@ QtObject {
             Options.settings.winW = targetWindow.width
             Options.settings.winH = targetWindow.height
         }
-        Playback.saveQueue()
-        Playback.flush()
-        sessionClosing()
+    }
+
+    // 保存播放会话（上次播放歌曲 / 队列 / 历史）+ 窗口几何
+    function saveSession(): void {
+        saveGeometry()
+        Options.app.savePlaybackSession()
+    }
+
+    // 关闭（X 按钮 / Alt+F4 / 任务栏关闭）：托盘开启则销毁整个场景后台播放，否则保存会话退出
+    function toClosing(): void {
+        if (closeToTray()) {
+            destroyToTray()
+            return
+        }
+        saveSession()
         if (tray)
             tray.quitApplication()
     }
 
-    // 关闭窗口：实际销毁原生窗口（任务栏项/句柄/渲染表面一并释放）而不是隐藏。
-    // QML 场景与播放引擎保留在内存中，音乐继续在后台播放；
-    // 从托盘恢复时 show() 会自动重建原生窗口（QWindowKit 会随 WinId 变化自动重新挂接）
+    // 关闭到托盘：保存会话后销毁整个主窗口场景（不是隐藏——任务栏项/句柄/渲染表面
+    // 与全部界面 QML 对象一并释放）。播放引擎存活于 AppRoot，音乐继续；
+    // 托盘恢复时 AppRoot 重新创建场景，SMTC 与窗口属性随新窗口重新挂接
     function destroyToTray(): void {
         if (!targetWindow || !targetWindow.visible)
             return
-        restoreVisibility = targetWindow.visibility
-        nativeWindowDestroyed = true
-        if (tray)
-            tray.destroyWindow(targetWindow)
-        if (!trayTipShown) {
-            trayTipShown = true
+        if (!Options.trayTipShown) {
+            Options.trayTipShown = true
             if (tray)
                 tray.showMessage("QueMusic", "窗口已关闭，音乐将在后台继续播放，点击托盘图标可恢复",
                                  SystemTrayManager.Information)
         }
+        saveSession()
+        Options.app.destroyMainWindow()
     }
 
+    // 场景存活时的托盘唤起：最小化则还原，再置前激活
     function restoreWindow(): void {
         if (!targetWindow)
             return
-        if (!targetWindow.visible) {
-            if (restoreVisibility === Window.Maximized)
-                targetWindow.showMaximized()
-            else if (restoreVisibility === Window.FullScreen)
-                targetWindow.showFullScreen()
-            else
-                targetWindow.showNormal()
-            // 原生窗口重建后 HWND 已变，SMTC 需要重新绑定到新窗口；
-            // show() 返回时平台窗口已创建，此时重绑可立即拿到有效句柄
-            if (nativeWindowDestroyed) {
-                nativeWindowDestroyed = false
-                console.log("[托盘恢复] 主窗口已重建，重新绑定 SMTC")
-                if (Options.smtc)
-                    Options.smtc.rebindWindow()
-            }
-        } else if (targetWindow.visibility === Window.Minimized) {
+        if (targetWindow.visibility === Window.Minimized)
             targetWindow.showNormal()
-        }
         targetWindow.raise()
         targetWindow.requestActivate()
-    }
-
-    function quitApp(): void {
-        forceQuit = true
-        toClosing()
     }
 }

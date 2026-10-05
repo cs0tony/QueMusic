@@ -14,28 +14,28 @@ Popup {
     height: parent.height - 180
     x: parent.width - 380
     y: 80
-    // 当前桌面部件模式：0.无 1.灵动岛 2.小窗播放器 3.歌词栏
-    property int desktopPlayerMode: 0
+    // 当前桌面部件模式：0.无 1.小窗播放器 2.桌面歌词（状态在 Options，跨场景存活；
+    // 桌面部件 Loader 常驻 AppRoot，主窗口关闭后桌面歌词仍悬浮）
     function changeDesktopPlayerMode(index: int): void {
-        desktopPlayer.desktopPlayerMode = index;
+        Options.desktopPlayerMode = index;
         switch(index) {
             case 0:
                 // 无：全部关闭
-                desktopPlayerLoader.active = false;
-                desktopLyricsLoader.active = false;
+                Options.app.desktopPlayerLoader.active = false;
+                Options.app.desktopLyricsLoader.active = false;
                 break;
             case 1:
-                // 小窗播放器：开启小窗，关闭灵动岛
-                desktopLyricsLoader.active = false;
-                desktopPlayerLoader.active = true;
-                if (desktopPlayerLoader.status === Loader.Ready) {
-                    desktopPlayerLoader.item.show();
+                // 小窗播放器：开启小窗，关闭桌面歌词
+                Options.app.desktopLyricsLoader.active = false;
+                Options.app.desktopPlayerLoader.active = true;
+                if (Options.app.desktopPlayerLoader.status === Loader.Ready) {
+                    Options.app.desktopPlayerLoader.item.show();
                 }
                 break;
             case 2:
-                // 歌词栏：暂未实现
-                desktopPlayerLoader.active = false;
-                desktopLyricsLoader.active = true;
+                // 桌面歌词
+                Options.app.desktopPlayerLoader.active = false;
+                Options.app.desktopLyricsLoader.active = true;
                 break;
         }
     }
@@ -90,7 +90,7 @@ Popup {
                     required property int index
                     width: parent.width
                     radius: Style.settings.labelRadius
-                    color: desktopPlayer.desktopPlayerMode === index ? Style.themeColor : Style.primaryColor
+                    color: Options.desktopPlayerMode === index ? Style.themeColor : Style.primaryColor
                     height: 60
                     border.width: 2
                     border.color: Style.sideColor
@@ -107,7 +107,7 @@ Popup {
                         anchors.verticalCenter: parent.verticalCenter
                         font.pixelSize: Style.settings.textH2
                         text: modelData
-                        color: desktopPlayer.desktopPlayerMode === index ? Style.secondaryColor : Style.fontColor
+                        color: Options.desktopPlayerMode === index ? Style.secondaryColor : Style.fontColor
                     }
                     Text {
                         x: parent.width - 42
@@ -115,7 +115,7 @@ Popup {
                         text: "\uf099"
                         font.pixelSize: Style.settings.texticon
                         font.family: IconFont.name
-                        visible: desktopPlayer.desktopPlayerMode === index
+                        visible: Options.desktopPlayerMode === index
                         color: Style.secondaryColor
                     }
                     MouseArea {
@@ -147,10 +147,10 @@ Popup {
 
     // 小窗播放器异步加载完成后自动显示（避免关闭按钮 hide 后无法再次出现）
     Connections {
-        target: desktopPlayerLoader
+        target: Options.app.desktopPlayerLoader
         function onStatusChanged(): void {
-            if (desktopPlayerLoader.status === Loader.Ready && desktopPlayer.desktopPlayerMode === 1) {
-                desktopPlayerLoader.item.show();
+            if (Options.app.desktopPlayerLoader.status === Loader.Ready && Options.desktopPlayerMode === 1) {
+                Options.app.desktopPlayerLoader.item.show();
             }
         }
     }
