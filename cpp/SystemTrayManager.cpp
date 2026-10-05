@@ -212,7 +212,14 @@ void SystemTrayManager::destroyWindow(QWindow *window)
     // QWindow 对象与 QML 场景保持有效，下次 show() 时平台窗口会自动重建
     if (window->isVisible())
         window->hide();
+    const quintptr nativeId = window->handle() ? quintptr(window->handle()->winId()) : 0;
     window->destroy();
+    // 销毁自证：handle 归空即 QPlatformWindow（原生 HWND/任务栏项/渲染表面）已释放；
+    // 注意不能用 winId() 取证——它会在窗口未创建时隐式重建窗口
+    qInfo() << "[托盘销毁] 原生窗口已销毁，销毁前句柄 =" << Qt::hex << nativeId
+            << "，销毁后 handle =" << (window->handle()
+                                           ? QStringLiteral("仍存在(异常!)")
+                                           : QStringLiteral("nullptr(已释放)"));
 }
 
 void SystemTrayManager::updateToolTip()

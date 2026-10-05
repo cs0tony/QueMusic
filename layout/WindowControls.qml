@@ -85,6 +85,7 @@ QtObject {
             // show() 返回时平台窗口已创建，此时重绑可立即拿到有效句柄
             if (nativeWindowDestroyed) {
                 nativeWindowDestroyed = false
+                console.log("[托盘恢复] 主窗口已重建，重新绑定 SMTC")
                 if (Options.smtc)
                     Options.smtc.rebindWindow()
             }
